@@ -26,6 +26,7 @@ import android.widget.EditText;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,6 +51,7 @@ public final class MainActivity extends android.app.Activity {
     private EditText fromInput;
     private EditText toInput;
     private EditText hitsInput;
+    private Switch allowWinnerRepeatSwitch;
     private LotteryBall currentNumber;
     private TextView drawCounter;
     private TextView repeatedNumbers;
@@ -64,6 +66,7 @@ public final class MainActivity extends android.app.Activity {
     private int activeFrom = 1;
     private int activeTo = 100;
     private int activeHits = 4;
+    private boolean activeAllowWinnerRepeat = true;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -106,19 +109,30 @@ public final class MainActivity extends android.app.Activity {
         settingsCard.addView(label("Rango y aciertos para ganar", 18, INK, true));
         LinearLayout range = row();
         range.setPadding(0, dp(8), 0, 0);
-        fromInput = numberInput("Desde", "1");
-        toInput = numberInput("Hasta", "100");
-        hitsInput = numberInput("Aciertos", "4");
+        fromInput = numberInput("1");
+        toInput = numberInput("100");
+        hitsInput = numberInput("4");
         LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(56), 1f);
         half.setMargins(0, 0, dp(4), 0);
-        range.addView(fromInput, half);
+        range.addView(numberField("Desde", fromInput), half);
         LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, dp(56), 1f);
         half2.setMargins(dp(4), 0, dp(4), 0);
-        range.addView(toInput, half2);
+        range.addView(numberField("Hasta", toInput), half2);
         LinearLayout.LayoutParams third = new LinearLayout.LayoutParams(0, dp(56), 1f);
         third.setMargins(dp(4), 0, 0, 0);
-        range.addView(hitsInput, third);
+        range.addView(numberField("Aciertos", hitsInput), third);
         settingsCard.addView(range);
+
+        allowWinnerRepeatSwitch = new Switch(this);
+        allowWinnerRepeatSwitch.setText("Permitir que un número ganador vuelva a salir");
+        allowWinnerRepeatSwitch.setTextColor(INK);
+        allowWinnerRepeatSwitch.setTextSize(14);
+        allowWinnerRepeatSwitch.setChecked(true);
+        allowWinnerRepeatSwitch.setPadding(0, dp(12), 0, 0);
+        settingsCard.addView(allowWinnerRepeatSwitch);
+        TextView repeatHelp = label("Desactívalo para retirar un número del bolillero cuando complete sus aciertos.", 12, MUTED, false);
+        repeatHelp.setPadding(0, dp(3), 0, 0);
+        settingsCard.addView(repeatHelp);
         root.addView(settingsCard, spaced());
 
         drawCounter = label("0 tiradas", 15, MUTED, true);
@@ -189,10 +203,29 @@ public final class MainActivity extends android.app.Activity {
             activeFrom = settings[0];
             activeTo = settings[1];
             activeHits = settings[2];
+            activeAllowWinnerRepeat = allowWinnerRepeatSwitch.isChecked();
             lockRange(true);
         }
-        final int value = activeFrom + random.nextInt(activeTo - activeFrom + 1);
+        final int value = randomEligibleNumber();
+        if (value < 0) {
+            Toast.makeText(this, "Todos los números del rango ya completaron sus aciertos.", Toast.LENGTH_LONG).show();
+            return;
+        }
         animateDraw(value);
+    }
+
+    private int randomEligibleNumber() {
+        if (activeAllowWinnerRepeat) return activeFrom + random.nextInt(activeTo - activeFrom + 1);
+        int eligible = 0;
+        for (int number = activeFrom; number <= activeTo; number++) {
+            if (counts[number] < activeHits) eligible++;
+        }
+        if (eligible == 0) return -1;
+        int selected = random.nextInt(eligible);
+        for (int number = activeFrom; number <= activeTo; number++) {
+            if (counts[number] < activeHits && selected-- == 0) return number;
+        }
+        return -1;
     }
 
     private void animateDraw(final int finalValue) {
@@ -201,12 +234,13 @@ public final class MainActivity extends android.app.Activity {
         drawCounter.setText("Sorteando…");
         final long[] lastChange = {0L};
         drawAnimator = ValueAnimator.ofFloat(0f, 1f);
-        drawAnimator.setDuration(2000L);
+        drawAnimator.setDuration(1500L);
         drawAnimator.addUpdateListener(animation -> {
             float progress = (float) animation.getAnimatedValue();
             long now = SystemClock.uptimeMillis();
             if (now - lastChange[0] >= 75L && progress < 0.94f) {
-                int preview = activeFrom + random.nextInt(activeTo - activeFrom + 1);
+                int preview = randomEligibleNumber();
+                if (preview < 0) preview = finalValue;
                 currentNumber.setDisplayText(String.valueOf(preview), preview);
                 lastChange[0] = now;
             }
@@ -281,9 +315,11 @@ public final class MainActivity extends android.app.Activity {
         activeFrom = 1;
         activeTo = 100;
         activeHits = 4;
+        activeAllowWinnerRepeat = true;
         fromInput.setText("1");
         toInput.setText("100");
         hitsInput.setText("4");
+        allowWinnerRepeatSwitch.setChecked(true);
         lockRange(false);
         saveGame();
         refreshUi();
@@ -317,9 +353,11 @@ public final class MainActivity extends android.app.Activity {
         fromInput.setEnabled(!locked);
         toInput.setEnabled(!locked);
         hitsInput.setEnabled(!locked);
+        allowWinnerRepeatSwitch.setEnabled(!locked);
         fromInput.setAlpha(locked ? 0.65f : 1f);
         toInput.setAlpha(locked ? 0.65f : 1f);
         hitsInput.setAlpha(locked ? 0.65f : 1f);
+        allowWinnerRepeatSwitch.setAlpha(locked ? 0.65f : 1f);
     }
 
     private void setDrawingState(boolean drawing) {
@@ -332,6 +370,7 @@ public final class MainActivity extends android.app.Activity {
             fromInput.setEnabled(false);
             toInput.setEnabled(false);
             hitsInput.setEnabled(false);
+            allowWinnerRepeatSwitch.setEnabled(false);
         } else {
             lockRange(!history.isEmpty());
         }
@@ -396,6 +435,7 @@ public final class MainActivity extends android.app.Activity {
                 .putInt("from", activeFrom)
                 .putInt("to", activeTo)
                 .putInt("hits", activeHits)
+                .putBoolean("allow_winner_repeat", activeAllowWinnerRepeat)
                 .putString("history", values.toString())
                 .apply();
     }
@@ -405,9 +445,11 @@ public final class MainActivity extends android.app.Activity {
         activeFrom = prefs.getInt("from", 1);
         activeTo = prefs.getInt("to", 100);
         activeHits = Math.max(1, Math.min(20, prefs.getInt("hits", 4)));
+        activeAllowWinnerRepeat = prefs.getBoolean("allow_winner_repeat", true);
         fromInput.setText(String.valueOf(activeFrom));
         toInput.setText(String.valueOf(activeTo));
         hitsInput.setText(String.valueOf(activeHits));
+        allowWinnerRepeatSwitch.setChecked(activeAllowWinnerRepeat);
         String saved = prefs.getString("history", "");
         if (saved != null && !saved.isEmpty()) {
             for (String part : saved.split(",")) {
@@ -443,11 +485,19 @@ public final class MainActivity extends android.app.Activity {
         return box;
     }
 
-    private EditText numberInput(String hint, String value) {
+    private LinearLayout numberField(String title, EditText input) {
+        LinearLayout field = column();
+        TextView fieldTitle = label(title, 12, MUTED, true);
+        fieldTitle.setGravity(Gravity.CENTER);
+        field.addView(fieldTitle, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(18)));
+        field.addView(input, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(38)));
+        return field;
+    }
+
+    private EditText numberInput(String value) {
         EditText input = new EditText(this);
-        input.setHint(hint);
         input.setText(value);
-        input.setTextSize(18);
+        input.setTextSize(17);
         input.setTextColor(INK);
         input.setHintTextColor(Color.rgb(160, 140, 151));
         input.setGravity(Gravity.CENTER);
