@@ -1,15 +1,21 @@
 package pe.klaype.bolilleropandeshop;
 
+import android.animation.Animator;
+import android.animation.AnimatorListenerAdapter;
+import android.animation.ValueAnimator;
 import android.app.AlertDialog;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RadialGradient;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Bundle;
+import android.os.SystemClock;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
@@ -34,7 +40,6 @@ public final class MainActivity extends android.app.Activity {
     private static final int INK = Color.rgb(35, 28, 33);
     private static final int MUTED = Color.rgb(108, 91, 101);
     private static final int CREAM = Color.rgb(255, 248, 245);
-    private static final int HITS_TO_WIN = 4;
     private static final String PREFS = "bolillero_game";
 
     private final SecureRandom random = new SecureRandom();
@@ -44,14 +49,21 @@ public final class MainActivity extends android.app.Activity {
 
     private EditText fromInput;
     private EditText toInput;
-    private TextView currentNumber;
+    private EditText hitsInput;
+    private LotteryBall currentNumber;
     private TextView drawCounter;
     private TextView repeatedNumbers;
     private TextView winners;
     private TextView historyView;
+    private TextView boardTitle;
     private BingoGrid grid;
+    private Button undoButton;
+    private Button resetButton;
+    private ValueAnimator drawAnimator;
+    private boolean drawCancelled;
     private int activeFrom = 1;
     private int activeTo = 100;
+    private int activeHits = 4;
 
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
@@ -82,7 +94,7 @@ public final class MainActivity extends android.app.Activity {
         LinearLayout titleBox = column();
         titleBox.setPadding(dp(12), 0, 0, 0);
         titleBox.addView(label("Bolillero PandeShop", 24, PINK, true));
-        titleBox.addView(label("Bingo con repetición · 4 aciertos", 14, GREEN, true));
+        titleBox.addView(label("Bingo con repetición · aciertos configurables", 14, GREEN, true));
         header.addView(titleBox, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         root.addView(header);
 
@@ -91,17 +103,21 @@ public final class MainActivity extends android.app.Activity {
         root.addView(fairness);
 
         LinearLayout settingsCard = card();
-        settingsCard.addView(label("Rango del sorteo", 18, INK, true));
+        settingsCard.addView(label("Rango y aciertos para ganar", 18, INK, true));
         LinearLayout range = row();
         range.setPadding(0, dp(8), 0, 0);
         fromInput = numberInput("Desde", "1");
         toInput = numberInput("Hasta", "100");
+        hitsInput = numberInput("Aciertos", "4");
         LinearLayout.LayoutParams half = new LinearLayout.LayoutParams(0, dp(56), 1f);
-        half.setMargins(0, 0, dp(6), 0);
+        half.setMargins(0, 0, dp(4), 0);
         range.addView(fromInput, half);
         LinearLayout.LayoutParams half2 = new LinearLayout.LayoutParams(0, dp(56), 1f);
-        half2.setMargins(dp(6), 0, 0, 0);
+        half2.setMargins(dp(4), 0, dp(4), 0);
         range.addView(toInput, half2);
+        LinearLayout.LayoutParams third = new LinearLayout.LayoutParams(0, dp(56), 1f);
+        third.setMargins(dp(4), 0, 0, 0);
+        range.addView(hitsInput, third);
         settingsCard.addView(range);
         root.addView(settingsCard, spaced());
 
@@ -114,13 +130,12 @@ public final class MainActivity extends android.app.Activity {
         stage.setOrientation(landscape ? LinearLayout.HORIZONTAL : LinearLayout.VERTICAL);
         stage.setGravity(Gravity.CENTER);
 
-        currentNumber = label("TOCA\nPARA SORTEAR", 27, Color.WHITE, true);
-        currentNumber.setGravity(Gravity.CENTER);
+        currentNumber = new LotteryBall(this);
+        currentNumber.setDisplayText("TOCA\nPARA SORTEAR", -1);
         currentNumber.setContentDescription("Tocar para sortear una bolilla");
-        currentNumber.setBackground(ballBackground());
         currentNumber.setElevation(dp(10));
         currentNumber.setOnClickListener(v -> drawBall());
-        LinearLayout.LayoutParams ballParams = new LinearLayout.LayoutParams(dp(220), dp(220));
+        LinearLayout.LayoutParams ballParams = new LinearLayout.LayoutParams(dp(232), dp(232));
         ballParams.gravity = Gravity.CENTER_HORIZONTAL;
         ballParams.setMargins(0, dp(10), 0, dp(14));
         stage.addView(currentNumber, ballParams);
@@ -138,22 +153,22 @@ public final class MainActivity extends android.app.Activity {
         root.addView(stage);
 
         LinearLayout controls = row();
-        Button undo = actionButton("Deshacer", false);
-        undo.setOnClickListener(v -> undoLast());
-        Button reset = actionButton("Nueva partida", true);
-        reset.setOnClickListener(v -> confirmReset());
+        undoButton = actionButton("Deshacer", false);
+        undoButton.setOnClickListener(v -> undoLast());
+        resetButton = actionButton("Nueva partida", true);
+        resetButton.setOnClickListener(v -> confirmReset());
         LinearLayout.LayoutParams control = new LinearLayout.LayoutParams(0, dp(52), 1f);
         control.setMargins(0, 0, dp(5), 0);
-        controls.addView(undo, control);
+        controls.addView(undoButton, control);
         LinearLayout.LayoutParams control2 = new LinearLayout.LayoutParams(0, dp(52), 1f);
         control2.setMargins(dp(5), 0, 0, 0);
-        controls.addView(reset, control2);
+        controls.addView(resetButton, control2);
         root.addView(controls);
 
         winners = section(root, "Ganadores", "Aún no hay ganadores.");
         historyView = section(root, "Historial de tiradas", "Aún no se ha sorteado ninguna bolilla.");
 
-        TextView boardTitle = label("Tablero · cuatro bolitas por número", 19, INK, true);
+        boardTitle = label("Tablero · 4 aciertos por número", 19, INK, true);
         boardTitle.setPadding(0, dp(18), 0, dp(8));
         root.addView(boardTitle);
         grid = new BingoGrid(this);
@@ -167,17 +182,62 @@ public final class MainActivity extends android.app.Activity {
     }
 
     private void drawBall() {
+        if (drawAnimator != null && drawAnimator.isRunning()) return;
         if (history.isEmpty()) {
-            int[] range = readRange();
-            if (range == null) return;
-            activeFrom = range[0];
-            activeTo = range[1];
+            int[] settings = readSettings();
+            if (settings == null) return;
+            activeFrom = settings[0];
+            activeTo = settings[1];
+            activeHits = settings[2];
             lockRange(true);
         }
-        int value = activeFrom + random.nextInt(activeTo - activeFrom + 1);
+        final int value = activeFrom + random.nextInt(activeTo - activeFrom + 1);
+        animateDraw(value);
+    }
+
+    private void animateDraw(final int finalValue) {
+        drawCancelled = false;
+        setDrawingState(true);
+        drawCounter.setText("Sorteando…");
+        final long[] lastChange = {0L};
+        drawAnimator = ValueAnimator.ofFloat(0f, 1f);
+        drawAnimator.setDuration(2000L);
+        drawAnimator.addUpdateListener(animation -> {
+            float progress = (float) animation.getAnimatedValue();
+            long now = SystemClock.uptimeMillis();
+            if (now - lastChange[0] >= 75L && progress < 0.94f) {
+                int preview = activeFrom + random.nextInt(activeTo - activeFrom + 1);
+                currentNumber.setDisplayText(String.valueOf(preview), preview);
+                lastChange[0] = now;
+            }
+            float wobble = (float) Math.sin(progress * Math.PI * 12f);
+            float pulse = 1f + 0.055f * Math.abs(wobble);
+            currentNumber.setScaleX(pulse);
+            currentNumber.setScaleY(pulse);
+            currentNumber.setRotation(wobble * 8f);
+            currentNumber.setTranslationX(wobble * dp(7) * (1f - progress * 0.45f));
+        });
+        drawAnimator.addListener(new AnimatorListenerAdapter() {
+            @Override public void onAnimationCancel(Animator animation) {
+                drawCancelled = true;
+            }
+
+            @Override public void onAnimationEnd(Animator animation) {
+                currentNumber.setScaleX(1f);
+                currentNumber.setScaleY(1f);
+                currentNumber.setRotation(0f);
+                currentNumber.setTranslationX(0f);
+                if (!drawCancelled) commitDraw(finalValue);
+                setDrawingState(false);
+            }
+        });
+        drawAnimator.start();
+    }
+
+    private void commitDraw(int value) {
         history.add(value);
         counts[value]++;
-        if (counts[value] == HITS_TO_WIN) {
+        if (counts[value] == activeHits) {
             winnerOrder.add(value);
             showWinner(value, winnerOrder.size());
         }
@@ -187,12 +247,13 @@ public final class MainActivity extends android.app.Activity {
     }
 
     private void undoLast() {
+        if (drawAnimator != null && drawAnimator.isRunning()) return;
         if (history.isEmpty()) {
             Toast.makeText(this, "No hay tiradas para deshacer.", Toast.LENGTH_SHORT).show();
             return;
         }
         int value = history.remove(history.size() - 1);
-        if (counts[value] == HITS_TO_WIN) winnerOrder.remove(Integer.valueOf(value));
+        if (counts[value] == activeHits) winnerOrder.remove(Integer.valueOf(value));
         counts[value]--;
         if (history.isEmpty()) lockRange(false);
         saveGame();
@@ -219,8 +280,10 @@ public final class MainActivity extends android.app.Activity {
         for (int i = 0; i < counts.length; i++) counts[i] = 0;
         activeFrom = 1;
         activeTo = 100;
+        activeHits = 4;
         fromInput.setText("1");
         toInput.setText("100");
+        hitsInput.setText("4");
         lockRange(false);
         saveGame();
         refreshUi();
@@ -231,19 +294,21 @@ public final class MainActivity extends android.app.Activity {
         String position = place == 1 ? "primer lugar" : "puesto " + place;
         new AlertDialog.Builder(this)
                 .setTitle(title)
-                .setMessage("El número " + number + " completó sus cuatro bolitas y obtiene el " + position + ".\n\nEl sorteo puede continuar para encontrar más ganadores.")
+                .setMessage("El número " + number + " completó " + activeHits + " aciertos y obtiene el " + position + ".\n\nEl sorteo puede continuar para encontrar más ganadores.")
                 .setPositiveButton("Continuar", null)
                 .show();
     }
 
-    private int[] readRange() {
+    private int[] readSettings() {
         try {
             int from = Integer.parseInt(fromInput.getText().toString().trim());
             int to = Integer.parseInt(toInput.getText().toString().trim());
+            int hits = Integer.parseInt(hitsInput.getText().toString().trim());
             if (from < 1 || to > 100 || from > to) throw new NumberFormatException();
-            return new int[]{from, to};
+            if (hits < 1 || hits > 20) throw new NumberFormatException();
+            return new int[]{from, to, hits};
         } catch (NumberFormatException error) {
-            Toast.makeText(this, "Usa un rango válido entre 1 y 100.", Toast.LENGTH_LONG).show();
+            Toast.makeText(this, "Usa un rango entre 1 y 100 y entre 1 y 20 aciertos.", Toast.LENGTH_LONG).show();
             return null;
         }
     }
@@ -251,15 +316,33 @@ public final class MainActivity extends android.app.Activity {
     private void lockRange(boolean locked) {
         fromInput.setEnabled(!locked);
         toInput.setEnabled(!locked);
+        hitsInput.setEnabled(!locked);
         fromInput.setAlpha(locked ? 0.65f : 1f);
         toInput.setAlpha(locked ? 0.65f : 1f);
+        hitsInput.setAlpha(locked ? 0.65f : 1f);
+    }
+
+    private void setDrawingState(boolean drawing) {
+        currentNumber.setEnabled(!drawing);
+        undoButton.setEnabled(!drawing);
+        resetButton.setEnabled(!drawing);
+        undoButton.setAlpha(drawing ? 0.45f : 1f);
+        resetButton.setAlpha(drawing ? 0.45f : 1f);
+        if (drawing) {
+            fromInput.setEnabled(false);
+            toInput.setEnabled(false);
+            hitsInput.setEnabled(false);
+        } else {
+            lockRange(!history.isEmpty());
+        }
     }
 
     private void refreshUi() {
         int last = history.isEmpty() ? -1 : history.get(history.size() - 1);
-        currentNumber.setText(last < 0 ? "TOCA\nPARA SORTEAR" : String.valueOf(last));
-        currentNumber.setTextSize(last < 0 ? 27 : 68);
+        currentNumber.setDisplayText(last < 0 ? "TOCA\nPARA SORTEAR" : String.valueOf(last), last);
         drawCounter.setText(history.size() + (history.size() == 1 ? " tirada" : " tiradas") + " · con repetición");
+        int displayedHits = history.isEmpty() ? safeInput(hitsInput, 4) : activeHits;
+        boardTitle.setText("Tablero · " + displayedHits + (displayedHits == 1 ? " acierto" : " aciertos") + " por número");
 
         if (winnerOrder.isEmpty()) {
             winners.setText("Aún no hay ganadores.");
@@ -289,7 +372,8 @@ public final class MainActivity extends android.app.Activity {
         }
         historyView.setText(recent.length() == 0 ? "Aún no se ha sorteado ninguna bolilla." : recent.toString());
         grid.setGameRange(history.isEmpty() ? safeInput(fromInput, 1) : activeFrom,
-                history.isEmpty() ? safeInput(toInput, 100) : activeTo);
+                history.isEmpty() ? safeInput(toInput, 100) : activeTo,
+                displayedHits);
         grid.invalidate();
     }
 
@@ -311,6 +395,7 @@ public final class MainActivity extends android.app.Activity {
         getSharedPreferences(PREFS, MODE_PRIVATE).edit()
                 .putInt("from", activeFrom)
                 .putInt("to", activeTo)
+                .putInt("hits", activeHits)
                 .putString("history", values.toString())
                 .apply();
     }
@@ -319,8 +404,10 @@ public final class MainActivity extends android.app.Activity {
         SharedPreferences prefs = getSharedPreferences(PREFS, MODE_PRIVATE);
         activeFrom = prefs.getInt("from", 1);
         activeTo = prefs.getInt("to", 100);
+        activeHits = Math.max(1, Math.min(20, prefs.getInt("hits", 4)));
         fromInput.setText(String.valueOf(activeFrom));
         toInput.setText(String.valueOf(activeTo));
+        hitsInput.setText(String.valueOf(activeHits));
         String saved = prefs.getString("history", "");
         if (saved != null && !saved.isEmpty()) {
             for (String part : saved.split(",")) {
@@ -329,7 +416,7 @@ public final class MainActivity extends android.app.Activity {
                     if (value >= 1 && value <= 100) {
                         history.add(value);
                         counts[value]++;
-                        if (counts[value] == HITS_TO_WIN) winnerOrder.add(value);
+                        if (counts[value] == activeHits) winnerOrder.add(value);
                     }
                 } catch (NumberFormatException ignored) { }
             }
@@ -381,14 +468,6 @@ public final class MainActivity extends android.app.Activity {
         return button;
     }
 
-    private GradientDrawable ballBackground() {
-        GradientDrawable ball = new GradientDrawable(GradientDrawable.Orientation.TL_BR,
-                new int[]{Color.rgb(255, 127, 178), PINK, Color.rgb(155, 8, 69)});
-        ball.setShape(GradientDrawable.OVAL);
-        ball.setStroke(dp(5), Color.WHITE);
-        return ball;
-    }
-
     private GradientDrawable rounded(int color, int radiusDp, int strokeColor, int strokeDp) {
         GradientDrawable shape = new GradientDrawable();
         shape.setColor(color);
@@ -433,6 +512,7 @@ public final class MainActivity extends android.app.Activity {
         private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
         private int from = 1;
         private int to = 100;
+        private int hitsToWin = 4;
         private static final int COLUMNS = 5;
 
         BingoGrid(Context context) {
@@ -440,9 +520,10 @@ public final class MainActivity extends android.app.Activity {
             setLayerType(View.LAYER_TYPE_SOFTWARE, null);
         }
 
-        void setGameRange(int newFrom, int newTo) {
+        void setGameRange(int newFrom, int newTo, int newHitsToWin) {
             from = Math.max(1, Math.min(100, newFrom));
             to = Math.max(from, Math.min(100, newTo));
+            hitsToWin = Math.max(1, Math.min(20, newHitsToWin));
             requestLayout();
         }
 
@@ -465,7 +546,7 @@ public final class MainActivity extends android.app.Activity {
                 float left = col * (cellWidth + gap);
                 float top = row * dp(76);
                 RectF cell = new RectF(left, top, left + cellWidth, top + cellHeight);
-                boolean won = counts[number] >= HITS_TO_WIN;
+                boolean won = counts[number] >= hitsToWin;
                 paint.setColor(won ? Color.rgb(226, 246, 210) : Color.WHITE);
                 paint.setStyle(Paint.Style.FILL);
                 canvas.drawRoundRect(cell, dp(11), dp(11), paint);
@@ -480,18 +561,35 @@ public final class MainActivity extends android.app.Activity {
                 paint.setColor(won ? GREEN : INK);
                 canvas.drawText(String.valueOf(number), left + dp(8), top + dp(22), paint);
 
-                float circleY = top + dp(49);
-                float startX = left + dp(10);
-                float spacing = Math.max(dp(13), (cellWidth - dp(20)) / 4f);
-                for (int hit = 0; hit < HITS_TO_WIN; hit++) {
-                    float cx = startX + hit * spacing;
-                    paint.setColor(hit < Math.min(counts[number], HITS_TO_WIN) ? PINK : Color.WHITE);
+                if (hitsToWin <= 8) {
+                    float circleY = top + dp(49);
+                    float available = cellWidth - dp(14);
+                    float spacing = available / hitsToWin;
+                    float radius = Math.min(dp(4.6f), spacing * 0.31f);
+                    float startX = left + dp(7) + spacing / 2f;
+                    for (int hit = 0; hit < hitsToWin; hit++) {
+                        float cx = startX + hit * spacing;
+                        paint.setColor(hit < Math.min(counts[number], hitsToWin) ? PINK : Color.WHITE);
+                        paint.setStyle(Paint.Style.FILL);
+                        canvas.drawCircle(cx, circleY, radius, paint);
+                        paint.setColor(PINK);
+                        paint.setStyle(Paint.Style.STROKE);
+                        paint.setStrokeWidth(dp(1.1f));
+                        canvas.drawCircle(cx, circleY, radius, paint);
+                    }
+                } else {
+                    float barLeft = left + dp(8);
+                    float barTop = top + dp(43);
+                    float barWidth = cellWidth - dp(16);
                     paint.setStyle(Paint.Style.FILL);
-                    canvas.drawCircle(cx, circleY, dp(5), paint);
+                    paint.setColor(Color.rgb(245, 218, 229));
+                    canvas.drawRoundRect(new RectF(barLeft, barTop, barLeft + barWidth, barTop + dp(8)), dp(4), dp(4), paint);
                     paint.setColor(PINK);
-                    paint.setStyle(Paint.Style.STROKE);
-                    paint.setStrokeWidth(dp(1.2f));
-                    canvas.drawCircle(cx, circleY, dp(5), paint);
+                    float ratio = Math.min(counts[number], hitsToWin) / (float) hitsToWin;
+                    canvas.drawRoundRect(new RectF(barLeft, barTop, barLeft + barWidth * ratio, barTop + dp(8)), dp(4), dp(4), paint);
+                    paint.setColor(MUTED);
+                    paint.setTextSize(dp(9));
+                    canvas.drawText(Math.min(counts[number], hitsToWin) + "/" + hitsToWin, barLeft, top + dp(64), paint);
                 }
                 if (won) {
                     paint.setStyle(Paint.Style.FILL);
@@ -502,5 +600,102 @@ public final class MainActivity extends android.app.Activity {
                 }
             }
         }
+    }
+
+    private final class LotteryBall extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private String display = "TOCA\nPARA SORTEAR";
+        private int paletteIndex;
+
+        LotteryBall(Context context) {
+            super(context);
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        void setDisplayText(String value, int number) {
+            display = value;
+            paletteIndex = number < 0 ? 0 : Math.abs(number) % 4;
+            setContentDescription(number < 0 ? "Tocar para sortear una bolilla" : "Bolilla número " + number);
+            invalidate();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float size = Math.min(getWidth(), getHeight());
+            float cx = getWidth() / 2f;
+            float cy = getHeight() / 2f;
+            float radius = size * 0.45f;
+            int[][] palettes = {
+                    {Color.rgb(179, 238, 52), Color.rgb(78, 164, 19), Color.rgb(26, 91, 9)},
+                    {Color.rgb(68, 222, 255), Color.rgb(20, 121, 220), Color.rgb(22, 40, 139)},
+                    {Color.rgb(255, 122, 177), Color.rgb(232, 35, 119), Color.rgb(127, 5, 56)},
+                    {Color.rgb(255, 207, 66), Color.rgb(246, 126, 24), Color.rgb(150, 51, 10)}
+            };
+            int[] colors = palettes[paletteIndex];
+
+            paint.clearShadowLayer();
+            paint.setShader(null);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(105, 17, 12, 28));
+            paint.setShadowLayer(dp(13), 0, dp(9), Color.argb(125, 0, 0, 0));
+            canvas.drawCircle(cx, cy + dp(3), radius, paint);
+            paint.clearShadowLayer();
+
+            paint.setShader(new RadialGradient(cx - radius * 0.34f, cy - radius * 0.38f,
+                    radius * 1.45f, colors, new float[]{0f, 0.55f, 1f}, Shader.TileMode.CLAMP));
+            canvas.drawCircle(cx, cy, radius, paint);
+            paint.setShader(null);
+
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(4));
+            paint.setColor(Color.argb(220, 255, 255, 255));
+            RectF outer = new RectF(cx - radius * 0.91f, cy - radius * 0.91f, cx + radius * 0.91f, cy + radius * 0.91f);
+            canvas.drawArc(outer, 205, 62, false, paint);
+            canvas.drawArc(outer, 25, 62, false, paint);
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.argb(115, 255, 255, 255));
+            canvas.drawOval(new RectF(cx - radius * 0.53f, cy - radius * 0.75f,
+                    cx - radius * 0.08f, cy - radius * 0.48f), paint);
+
+            float badgeRadius = radius * 0.48f;
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(colors[2]);
+            canvas.drawCircle(cx, cy, badgeRadius + dp(6), paint);
+            paint.setColor(Color.WHITE);
+            canvas.drawCircle(cx, cy, badgeRadius, paint);
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(3));
+            paint.setColor(colors[1]);
+            canvas.drawCircle(cx, cy, badgeRadius - dp(4), paint);
+
+            paint.setShader(null);
+            paint.setStyle(Paint.Style.FILL);
+            paint.setColor(Color.BLACK);
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+            if (display.contains("\n")) {
+                String[] lines = display.split("\\n");
+                paint.setTextSize(dp(14));
+                Paint.FontMetrics fm = paint.getFontMetrics();
+                float lineHeight = fm.descent - fm.ascent;
+                float firstY = cy - lineHeight * (lines.length - 1) / 2f - (fm.ascent + fm.descent) / 2f;
+                for (int i = 0; i < lines.length; i++) canvas.drawText(lines[i], cx, firstY + i * lineHeight, paint);
+            } else {
+                paint.setTextSize(display.length() >= 3 ? dp(44) : dp(58));
+                Paint.FontMetrics fm = paint.getFontMetrics();
+                float baseline = cy - (fm.ascent + fm.descent) / 2f;
+                canvas.drawText(display, cx, baseline, paint);
+            }
+        }
+    }
+
+    @Override protected void onStop() {
+        if (drawAnimator != null && drawAnimator.isRunning()) {
+            drawCancelled = true;
+            drawAnimator.cancel();
+            refreshUi();
+        }
+        super.onStop();
     }
 }
