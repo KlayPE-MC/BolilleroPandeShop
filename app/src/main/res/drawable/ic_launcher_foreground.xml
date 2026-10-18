@@ -1,10 +1,8 @@
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
-    android:viewportWidth="108"
-    android:viewportHeight="108">
-    <path android:fillColor="#EC2F83" android:pathData="M54,14A40,40 0,1 0,54 94A40,40 0,1 0,54 14Z" />
-    <path android:fillColor="#FFFFFF" android:pathData="M54,25A29,29 0,1 0,54 83A29,29 0,1 0,54 25Z" />
-    <path android:fillColor="#62A02B" android:pathData="M37,37L55,37Q68,37 68,49Q68,61 55,61L47,61L47,72L37,72ZM47,46L47,53L55,53Q59,53 59,49.5Q59,46 55,46Z" />
-    <path android:fillColor="#EC2F83" android:pathData="M70,28L73,34L80,35L75,40L76,47L70,44L64,47L65,40L60,35L67,34Z" />
-</vector>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:left="13dp" android:top="13dp" android:right="13dp" android:bottom="13dp">
+        <bitmap
+            android:src="@drawable/logo_pandeshop_icon"
+            android:gravity="fill" />
+    </item>
+</layer-list>
+

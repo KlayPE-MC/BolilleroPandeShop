@@ -4,23 +4,30 @@ import android.animation.Animator;
 import android.animation.AnimatorListenerAdapter;
 import android.animation.ValueAnimator;
 import android.app.AlertDialog;
+import android.app.Dialog;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.Path;
 import android.graphics.RadialGradient;
 import android.graphics.RectF;
 import android.graphics.Shader;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
+import android.media.ToneGenerator;
 import android.os.Bundle;
 import android.os.SystemClock;
+import android.speech.tts.TextToSpeech;
 import android.text.InputType;
 import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.ImageView;
@@ -62,6 +69,9 @@ public final class MainActivity extends android.app.Activity {
     private Button undoButton;
     private Button resetButton;
     private ValueAnimator drawAnimator;
+    private ToneGenerator toneGenerator;
+    private TextToSpeech textToSpeech;
+    private boolean voiceReady;
     private boolean drawCancelled;
     private int activeFrom = 1;
     private int activeTo = 100;
@@ -74,8 +84,31 @@ public final class MainActivity extends android.app.Activity {
         getWindow().setNavigationBarColor(CREAM);
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR);
         buildUi();
+        initializeAudio();
         loadGame();
         refreshUi();
+    }
+
+    private void initializeAudio() {
+        try {
+            toneGenerator = new ToneGenerator(AudioManager.STREAM_MUSIC, 62);
+        } catch (RuntimeException ignored) {
+            toneGenerator = null;
+        }
+        textToSpeech = new TextToSpeech(this, status -> {
+            if (status != TextToSpeech.SUCCESS || textToSpeech == null) return;
+            int language = textToSpeech.setLanguage(new Locale("es", "PE"));
+            voiceReady = language != TextToSpeech.LANG_MISSING_DATA
+                    && language != TextToSpeech.LANG_NOT_SUPPORTED;
+            textToSpeech.setPitch(1.14f);
+            textToSpeech.setSpeechRate(0.92f);
+        });
+    }
+
+    private void playTone(int tone, int durationMs) {
+        if (toneGenerator != null) {
+            try { toneGenerator.startTone(tone, durationMs); } catch (RuntimeException ignored) { }
+        }
     }
 
     private void buildUi() {
@@ -233,6 +266,8 @@ public final class MainActivity extends android.app.Activity {
         setDrawingState(true);
         drawCounter.setText("Sorteando…");
         final long[] lastChange = {0L};
+        final long[] lastSound = {0L};
+        playTone(ToneGenerator.TONE_PROP_BEEP, 80);
         drawAnimator = ValueAnimator.ofFloat(0f, 1f);
         drawAnimator.setDuration(1500L);
         drawAnimator.addUpdateListener(animation -> {
@@ -243,6 +278,10 @@ public final class MainActivity extends android.app.Activity {
                 if (preview < 0) preview = finalValue;
                 currentNumber.setDisplayText(String.valueOf(preview), preview);
                 lastChange[0] = now;
+            }
+            if (now - lastSound[0] >= 150L && progress < 0.94f) {
+                playTone(ToneGenerator.TONE_PROP_BEEP2, 38);
+                lastSound[0] = now;
             }
             float wobble = (float) Math.sin(progress * Math.PI * 12f);
             float pulse = 1f + 0.055f * Math.abs(wobble);
@@ -271,6 +310,7 @@ public final class MainActivity extends android.app.Activity {
     private void commitDraw(int value) {
         history.add(value);
         counts[value]++;
+        playTone(ToneGenerator.TONE_PROP_ACK, 170);
         if (counts[value] == activeHits) {
             winnerOrder.add(value);
             showWinner(value, winnerOrder.size());
@@ -326,13 +366,52 @@ public final class MainActivity extends android.app.Activity {
     }
 
     private void showWinner(int number, int place) {
-        String title = place == 1 ? "¡Tenemos ganador!" : "¡Nuevo ganador!";
-        String position = place == 1 ? "primer lugar" : "puesto " + place;
-        new AlertDialog.Builder(this)
-                .setTitle(title)
-                .setMessage("El número " + number + " completó " + activeHits + " aciertos y obtiene el " + position + ".\n\nEl sorteo puede continuar para encontrar más ganadores.")
-                .setPositiveButton("Continuar", null)
-                .show();
+        final Dialog dialog = new Dialog(this);
+        dialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
+
+        LinearLayout content = column();
+        content.setPadding(dp(13), dp(13), dp(13), dp(13));
+        content.setBackground(rounded(Color.rgb(41, 12, 75), 26, Color.rgb(255, 201, 62), 2));
+
+        WinnerCelebrationView celebration = new WinnerCelebrationView(this, number, place, activeHits);
+        content.addView(celebration, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(330)));
+
+        Button continueButton = actionButton("Continuar sorteo", true);
+        continueButton.setOnClickListener(v -> dialog.dismiss());
+        LinearLayout.LayoutParams buttonParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, dp(54));
+        buttonParams.setMargins(dp(18), dp(8), dp(18), dp(10));
+        content.addView(continueButton, buttonParams);
+
+        dialog.setContentView(content);
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setBackgroundDrawable(new ColorDrawable(Color.TRANSPARENT));
+                window.setDimAmount(0.72f);
+                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND);
+                window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(28), dp(520)),
+                        ViewGroup.LayoutParams.WRAP_CONTENT);
+            }
+            celebration.startCelebration();
+        });
+        dialog.setOnDismissListener(ignored -> celebration.stopCelebration());
+        dialog.show();
+        Window window = dialog.getWindow();
+        if (window != null) {
+            window.setLayout(Math.min(getResources().getDisplayMetrics().widthPixels - dp(28), dp(520)),
+                    ViewGroup.LayoutParams.WRAP_CONTENT);
+        }
+        speakWinner();
+    }
+
+    private void speakWinner() {
+        if (voiceReady && textToSpeech != null) {
+            textToSpeech.speak("¡Ganaste!", TextToSpeech.QUEUE_FLUSH, null, "pande_winner");
+        } else {
+            playTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 500);
+        }
     }
 
     private int[] readSettings() {
@@ -740,6 +819,142 @@ public final class MainActivity extends android.app.Activity {
         }
     }
 
+    private final class WinnerCelebrationView extends View {
+        private final Paint paint = new Paint(Paint.ANTI_ALIAS_FLAG);
+        private final Path path = new Path();
+        private final int number;
+        private final int place;
+        private final int hits;
+        private ValueAnimator animator;
+        private float phase;
+
+        WinnerCelebrationView(Context context, int winnerNumber, int winnerPlace, int requiredHits) {
+            super(context);
+            number = winnerNumber;
+            place = winnerPlace;
+            hits = requiredHits;
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null);
+        }
+
+        void startCelebration() {
+            if (animator != null && animator.isRunning()) return;
+            animator = ValueAnimator.ofFloat(0f, 1f);
+            animator.setDuration(520L);
+            animator.setRepeatCount(ValueAnimator.INFINITE);
+            animator.setRepeatMode(ValueAnimator.REVERSE);
+            animator.addUpdateListener(value -> {
+                phase = (float) value.getAnimatedValue();
+                invalidate();
+            });
+            animator.start();
+        }
+
+        void stopCelebration() {
+            if (animator != null) animator.cancel();
+        }
+
+        @Override protected void onDraw(Canvas canvas) {
+            super.onDraw(canvas);
+            float width = getWidth();
+            float height = getHeight();
+            float cx = width / 2f;
+            float cy = height * 0.48f;
+
+            paint.setStyle(Paint.Style.FILL);
+            paint.setShader(new RadialGradient(cx, cy, Math.max(width, height) * 0.68f,
+                    new int[]{Color.rgb(112, 42, 186), Color.rgb(45, 12, 88), Color.rgb(20, 6, 44)},
+                    new float[]{0f, 0.62f, 1f}, Shader.TileMode.CLAMP));
+            canvas.drawRoundRect(new RectF(0, 0, width, height), dp(20), dp(20), paint);
+            paint.setShader(null);
+
+            for (int i = 0; i < 18; i++) {
+                double angle = Math.PI * 2 * i / 18d;
+                float inner = dp(54);
+                float outer = Math.max(width, height) * 0.68f;
+                path.reset();
+                path.moveTo(cx + (float) Math.cos(angle - 0.075) * inner,
+                        cy + (float) Math.sin(angle - 0.075) * inner);
+                path.lineTo(cx + (float) Math.cos(angle) * outer,
+                        cy + (float) Math.sin(angle) * outer);
+                path.lineTo(cx + (float) Math.cos(angle + 0.075) * inner,
+                        cy + (float) Math.sin(angle + 0.075) * inner);
+                path.close();
+                paint.setColor(Color.argb(i % 2 == 0 ? 33 : 17, 255, 101, 209));
+                canvas.drawPath(path, paint);
+            }
+
+            drawConfetti(canvas, width, height);
+
+            RectF sign = new RectF(dp(20), dp(75), width - dp(20), height - dp(54));
+            paint.setShadowLayer(dp(13), 0, dp(7), Color.argb(190, 0, 0, 0));
+            paint.setColor(Color.rgb(188, 14, 38));
+            canvas.drawRoundRect(sign, dp(22), dp(22), paint);
+            paint.clearShadowLayer();
+            paint.setStyle(Paint.Style.STROKE);
+            paint.setStrokeWidth(dp(4));
+            paint.setColor(Color.rgb(255, 180, 32));
+            canvas.drawRoundRect(sign, dp(22), dp(22), paint);
+            paint.setStyle(Paint.Style.FILL);
+
+            drawBulbs(canvas, sign);
+
+            paint.setTextAlign(Paint.Align.CENTER);
+            paint.setTypeface(Typeface.create(Typeface.DEFAULT, Typeface.BOLD));
+            paint.setColor(Color.rgb(255, 231, 147));
+            paint.setShadowLayer(dp(4), 0, dp(3), Color.rgb(82, 26, 0));
+            paint.setTextSize(dp(42));
+            canvas.drawText("¡GANASTE!", cx, dp(145), paint);
+            paint.clearShadowLayer();
+
+            paint.setColor(Color.WHITE);
+            paint.setTextSize(dp(23));
+            canvas.drawText("Número " + number, cx, dp(184), paint);
+            paint.setTextSize(dp(15));
+            String position = place == 1 ? "Primer ganador" : "Ganador Nº " + place;
+            canvas.drawText(position + " · " + hits + " aciertos", cx, dp(214), paint);
+            paint.setTextSize(dp(13));
+            paint.setColor(Color.rgb(255, 225, 238));
+            canvas.drawText("El sorteo puede continuar", cx, dp(244), paint);
+        }
+
+        private void drawBulbs(Canvas canvas, RectF sign) {
+            int topCount = Math.max(7, (int) (sign.width() / dp(32)));
+            for (int i = 0; i <= topCount; i++) {
+                float x = sign.left + dp(13) + i * (sign.width() - dp(26)) / topCount;
+                drawBulb(canvas, x, sign.top + dp(10), i);
+                drawBulb(canvas, x, sign.bottom - dp(10), i + 1);
+            }
+            int sideCount = 4;
+            for (int i = 1; i < sideCount; i++) {
+                float y = sign.top + i * sign.height() / sideCount;
+                drawBulb(canvas, sign.left + dp(10), y, i + 2);
+                drawBulb(canvas, sign.right - dp(10), y, i + 3);
+            }
+        }
+
+        private void drawBulb(Canvas canvas, float x, float y, int index) {
+            boolean bright = ((index & 1) == 0) == (phase > 0.5f);
+            paint.setColor(bright ? Color.WHITE : Color.rgb(255, 180, 30));
+            if (bright) paint.setShadowLayer(dp(8), 0, 0, Color.YELLOW);
+            canvas.drawCircle(x, y, dp(bright ? 5.1f : 4.3f), paint);
+            paint.clearShadowLayer();
+        }
+
+        private void drawConfetti(Canvas canvas, float width, float height) {
+            int[] colors = {Color.YELLOW, Color.rgb(255, 73, 156), Color.CYAN, Color.rgb(128, 239, 51)};
+            paint.setStrokeWidth(dp(3));
+            paint.setStrokeCap(Paint.Cap.ROUND);
+            for (int i = 0; i < 22; i++) {
+                float x = (i * 83f + 31f) % Math.max(1f, width - dp(18)) + dp(9);
+                float baseY = (i * 47f + 19f) % Math.max(1f, height - dp(22)) + dp(11);
+                float y = (baseY + phase * dp(12) * (i % 3 + 1)) % Math.max(dp(12), height - dp(8));
+                paint.setColor(colors[i % colors.length]);
+                canvas.drawLine(x, y, x + dp((i % 2 == 0) ? 7 : -7), y + dp(5), paint);
+            }
+            paint.setStrokeCap(Paint.Cap.BUTT);
+        }
+    }
+
     @Override protected void onStop() {
         if (drawAnimator != null && drawAnimator.isRunning()) {
             drawCancelled = true;
@@ -748,4 +963,11 @@ public final class MainActivity extends android.app.Activity {
         }
         super.onStop();
     }
+
+    @Override protected void onDestroy() {
+        if (toneGenerator != null) toneGenerator.release();
+        if (textToSpeech != null) textToSpeech.shutdown();
+        super.onDestroy();
+    }
 }
+
